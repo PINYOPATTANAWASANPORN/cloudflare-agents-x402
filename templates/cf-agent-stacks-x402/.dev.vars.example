@@ -1,0 +1,4 @@
+# openssl rand -base64 32
+WALLET_KEK=
+# Optional: a funded testnet key so payments actually settle in dev
+PAYER_PRIVATE_KEY=
