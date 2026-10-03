@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cf-agent-stacks-x402",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "STACKS_NETWORK": "testnet",
+    // Address that receives payments for /premium and PaidMCP tools.
+    "PAY_TO": "REPLACE_WITH_YOUR_STACKS_ADDRESS",
+    "MAX_SATS_PER_PAYMENT": "1000"
+  },
+  // Secrets (wrangler secret put / .dev.vars):
+  //   WALLET_KEK         32 random bytes, base64. Encrypts each agent's key.
+  //   PAYER_PRIVATE_KEY  optional, dev only: pay from a funded wallet instead.
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "PaidMCP", "name": "PaidMCP" },
+      { "class_name": "StacksAgent", "name": "StacksAgent" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PaidMCP", "StacksAgent"] }]
+}
