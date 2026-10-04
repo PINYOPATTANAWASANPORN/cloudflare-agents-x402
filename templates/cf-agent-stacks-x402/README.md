@@ -1,6 +1,6 @@
 # cf-agent-stacks-x402
 
-A Cloudflare Agents SDK starter where every agent has its **own Stacks wallet** and can both **charge** and **pay** in sBTC over x402. It is built on [`x402-stacks-agents`](../../packages/x402-stacks-agents). Payments settle through the aibtc x402 relay, which sponsors gas, so a wallet only needs sBTC.
+A Cloudflare Agents SDK starter where every agent has its **own Stacks wallet** and can both **charge** and **pay** in sBTC over x402. It is built on [`x402-stacks-agents`](../../packages/x402-stacks-agents). Payments settle through the aibtc x402 relay. They are self-paid, so an agent wallet needs sBTC to pay with plus a little STX for fees.
 
 | Piece | What it shows |
 |---|---|
@@ -24,12 +24,12 @@ curl -XPOST localhost:8787/agent/alice/tool -d '{"name":"square","args":{"number
 curl -XPOST localhost:8787/agent/alice/fetch -d '{"url":"http://localhost:8787/premium"}'
 ```
 
-A new agent wallet starts empty, so paid calls fail at settlement (`invalid_transaction_state`). To make them settle, do one of the following:
+A new agent wallet starts empty, so paid calls fail until it's funded. To make them settle, do one of the following:
 
-- send testnet sBTC to the address returned by `/agent/<name>/wallet`, or
-- set `PAYER_PRIVATE_KEY` in `.dev.vars` to a funded testnet key.
+- send sBTC **and a little STX** (0.05 STX covers dozens of payments) to the address returned by `/agent/<name>/wallet`, or
+- set `PAYER_PRIVATE_KEY` in `.dev.vars` to a funded key.
 
-Gas is sponsored, so no STX is needed.
+Tested on mainnet on 2026-10-04: an agent paid 100 sats each for `square` and for `/premium`. See `RESEARCH.md` for the transaction IDs.
 
 ## Configure
 
