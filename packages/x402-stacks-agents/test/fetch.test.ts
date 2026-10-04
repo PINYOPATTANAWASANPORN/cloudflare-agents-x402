@@ -40,7 +40,7 @@ function server(amount: string) {
   });
 }
 
-const cfg = { privateKey: randomPrivateKey(), network: "testnet" as const, getNonce: async () => 0n };
+const cfg = { privateKey: randomPrivateKey(), network: "testnet" as const, getNonce: async () => 0n, fee: 1000n };
 
 describe("wrapFetchWithStacksPayment", () => {
   it("pays a 402 and retries with the same body", async () => {
