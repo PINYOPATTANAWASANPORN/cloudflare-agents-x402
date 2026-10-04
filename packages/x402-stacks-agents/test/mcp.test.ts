@@ -57,7 +57,7 @@ async function setup(opts: {
   const client = withX402StacksClient(raw, {
     privateKey: payerKey,
     network: "testnet",
-    getNonce: async () => 0n,
+    getNonce: async () => 0n, fee: 1000n,
     maxAmount: opts.maxSbtc !== undefined ? { sBTC: opts.maxSbtc } : undefined,
     confirmationCallback: opts.confirm as any
   });
