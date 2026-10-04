@@ -89,7 +89,7 @@ Source: https://github.com/x402-foundation/x402 (coinbase/x402 is now the dev fo
 - **SIP-018**: https://docs.stacks.co/reference/stacks.js/stacks-transactions/signing/signstructureddata.md
 - **Proposed onboarding flow**:
   1. The agent's `onStart()` generates a key and stores it in DO SQLite, encrypted with a Workers secret.
-  2. The onboarding Worker funds the wallet from the funder address (small STX for fees, or rely on relay sponsorship, plus optional sBTC).
+  2. The onboarding Worker funds the wallet from the funder address: sBTC to spend plus a little STX for fees (payments are self-paid; the relay's `/settle` does not sponsor).
   3. The wallet calls `register-full` with `framework=cloudflare-agents`.
   4. The onboarding service signs a SIP-018 attestation `{wallet, framework, createdAt}` and stores it in D1.
 
@@ -152,6 +152,26 @@ apps/dashboard/                   # Worker + D1 + Queue + Chainhook ingest + UI
 2. Payload field (`transaction` vs `signedTransaction`) and asset format going forward: align with aibtcdev / PR #962.
 3. Chainhooks 2.0 pricing, quotas and how webhooks are authenticated (not documented on the pages I read).
 4. Exact Hiro v3 paths and the API key header name.
-5. Who funds onboarding (STX for fees vs relying on relay sponsorship) and what the per-wallet budget is.
+5. Who funds onboarding and the per-wallet budget (sBTC to spend plus about 0.05 STX for fees; relay sponsorship via `/sponsor` needs an aibtc API key).
 6. Whether to upstream a PR to `cloudflare/agents` that lets callers inject their own `x402ResourceServer` / `x402Client`, so Stacks plugs into the official `withX402`.
 7. ~~Status of other Stacks facilitators~~ Resolved: `facilitator.stacksx402.com` does not respond and the `x402-stacks` default (`x402-backend-7eby.onrender.com`) returns 503 **[live]**. The aibtc relay is the only confirmed working mainnet facilitator, so the add-on must default to it instead of the `x402-stacks` default.
+
+## 9. Correction and mainnet test (2026-10-04)
+
+**Correction.** Earlier sections say the aibtc relay sponsors gas on `/settle`. The relay's own docs (v1.34.0, `src/routes/discovery.ts`) say otherwise: `/settle` broadcasts self-paid or already sponsor-signed transactions, and refuses an empty sponsor slot with `invalid_transaction_state`. Sponsorship exists only through `/sponsor`, which needs an API key. The add-on now builds self-paid transactions by default, so agent wallets need a little STX.
+
+**Mainnet test.** The template ran locally against `stacks:1` with a fresh agent wallet `SP2AJ20ZJC3J6Y0TSRECMNPKNDQ3NMC6ZCFG1VYZ9`.
+
+| Step | Transaction | Result |
+|---|---|---|
+| Fund agent with 300 sats from a funding wallet | `405f2c4b…7f9f` | confirmed, block 9120117 |
+| Fund agent with 0.05 STX for fees | `d5c14510…cf28` | confirmed |
+| Agent pays 100 sats for MCP tool `square` | `1e986213…7715` (nonce 0) | confirmed, block 9120178, tool returned `49` |
+| Agent pays 100 sats for HTTP `/premium` | `07f5e597…3558` (nonce 1) | confirmed, block 9120178, `200` |
+
+Each payment was self-paid (fee 0.001291 STX), went from the agent back to the funding wallet, and carried an `x402:<nonce>` memo. The agent ended with 100 sats and 0.047418 STX.
+
+**Findings:**
+- The relay's `/settle` returns `success` at broadcast, before confirmation, so content is released while the payment is still in the mempool.
+- `/verify` doesn't check balances, as noted above.
+- A nonce reserved for a payment the relay refused left a gap. The template now reads the nonce from the chain (`possible_next_nonce`, which includes the mempool).
