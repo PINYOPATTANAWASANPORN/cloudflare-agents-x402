@@ -13,6 +13,7 @@ A Cloudflare Agents SDK starter where every agent has its **own Stacks wallet** 
 ```sh
 npm install
 cp .dev.vars.example .dev.vars      # set WALLET_KEK=$(openssl rand -base64 32)
+# set PAY_TO in wrangler.jsonc to the Stacks address that should receive payments
 npm run dev
 ```
 
