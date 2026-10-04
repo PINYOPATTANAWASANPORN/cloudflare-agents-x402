@@ -13,7 +13,7 @@ const key = randomPrivateKey();
 const payTo = privateKeyToAddress(randomPrivateKey(), "testnet");
 
 describe("signPayment", () => {
-  it("builds a sponsored sBTC transfer with a deny-mode post-condition and x402 memo", async () => {
+  it("builds a self-paid sBTC transfer with a deny-mode post-condition and x402 memo", async () => {
     const hex = await signPayment(
       {
         scheme: "exact",
@@ -23,11 +23,11 @@ describe("signPayment", () => {
         payTo,
         maxTimeoutSeconds: 300
       },
-      { privateKey: key, nonce: 0n }
+      { privateKey: key, nonce: 0n, fee: 2000n }
     );
     const tx = deserializeTransaction(hex);
-    expect(tx.auth.authType).toBe(AuthType.Sponsored);
-    expect(tx.auth.spendingCondition.fee).toBe(0n);
+    expect(tx.auth.authType).toBe(AuthType.Standard);
+    expect(tx.auth.spendingCondition.fee).toBe(2000n);
     expect(tx.postConditionMode).toBe(PostConditionMode.Deny);
     expect(tx.postConditions.values).toHaveLength(1);
 
@@ -43,7 +43,7 @@ describe("signPayment", () => {
     expect(isFacilitatorMemo(memoText)).toBe(true);
   });
 
-  it("builds a sponsored STX transfer", async () => {
+  it("builds a sponsored STX transfer when asked", async () => {
     const hex = await signPayment(
       {
         scheme: "exact",
@@ -53,7 +53,7 @@ describe("signPayment", () => {
         payTo,
         maxTimeoutSeconds: 300
       },
-      { privateKey: key, nonce: 0n }
+      { privateKey: key, nonce: 0n, sponsored: true }
     );
     const tx = deserializeTransaction(hex);
     expect(tx.auth.authType).toBe(AuthType.Sponsored);
