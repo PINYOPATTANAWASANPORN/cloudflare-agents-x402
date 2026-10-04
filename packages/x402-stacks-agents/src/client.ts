@@ -25,8 +25,13 @@ export type StacksPayerConfig = {
   confirmationCallback?: (
     accepts: PaymentRequirementsV2[]
   ) => Promise<boolean>;
-  /** Build sponsored transactions (required by the aibtc relay). Default true. */
+  /**
+   * Build sponsored (fee 0) transactions for a sponsoring facilitator.
+   * Default false: payments are self-paid, so the wallet needs a little STX.
+   */
   sponsored?: boolean;
+  /** Fixed fee in microSTX per payment. Estimated from the network when omitted. */
+  fee?: bigint;
   /**
    * Supply the account nonce (e.g. from agent state, so concurrent payments
    * don't collide). Fetched from the Stacks API when omitted.
@@ -97,6 +102,7 @@ export async function payFor(
   return createPaymentPayload(required, selected, {
     privateKey: cfg.privateKey,
     sponsored: cfg.sponsored,
+    fee: cfg.fee,
     nonce: cfg.getNonce ? await cfg.getNonce(payerAddress(cfg)) : undefined
   });
 }
