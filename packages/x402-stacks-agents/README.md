@@ -3,7 +3,8 @@
 Stacks x402 payments (sBTC, STX, USDCx) for [Cloudflare's Agents SDK](https://developers.cloudflare.com/agents/tools/payments/x402/). It is the Stacks counterpart to `agents/x402`, which only supports EVM, and is built on [`x402-stacks`](https://github.com/tony1908/x402Stacks).
 
 - Uses the same MCP transport as `agents/x402`: `_meta["x402/error"]`, `_meta["x402/payment"]` and `_meta["x402/payment-response"]`.
-- Settles through the [aibtc x402 sponsor relay](https://github.com/aibtcdev/x402-sponsor-relay) by default, which pays gas. Payments are therefore sponsored (fee 0) transactions with a deny-mode post-condition.
+- Settles through the [aibtc x402 relay](https://github.com/aibtcdev/x402-sponsor-relay) by default. Its `/settle` (v1.34+) broadcasts **self-paid** transactions and does not sponsor them, so the paying wallet needs a little STX for fees (about 0.0013 STX per payment in Oct 2026). Payments carry a deny-mode post-condition, so they can't move more than the exact amount.
+- `/settle` returns success once the transaction is **broadcast**, not confirmed, so the tool result is released while the payment is still in the mempool.
 - Every payment carries an `x402:<nonce>` memo for on-chain attribution.
 - Runs in Workers (`nodejs_compat`, which is the default from compat date 2026-08-04).
 
@@ -65,4 +66,5 @@ const res = await paidFetch("https://x402.aibtc.com/...");
 | `settle` | `"after-success"` | Set to `"before-run"` to charge before the tool executes |
 | `maxAmount` | sBTC 1,000 sats · STX 1 STX · USDCx 0.10 | Per payment, in atomic units |
 | `getNonce` | fetched from the Stacks API | Supply it from agent state to avoid nonce collisions |
-| `sponsored` | `true` | The relay rejects transactions that aren't sponsored |
+| `sponsored` | `false` | Build fee-0 transactions for a facilitator that co-signs as sponsor. The aibtc relay's `/settle` refuses them |
+| `fee` | estimated | Fixed fee in microSTX per payment |
