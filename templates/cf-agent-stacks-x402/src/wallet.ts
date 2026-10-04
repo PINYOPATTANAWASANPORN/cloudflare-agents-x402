@@ -40,7 +40,6 @@ export class AgentWallet {
       network TEXT NOT NULL,
       key_ct TEXT NOT NULL,
       key_iv TEXT NOT NULL,
-      last_nonce INTEGER,
       created_at INTEGER NOT NULL
     )`;
   }
@@ -85,17 +84,15 @@ export class AgentWallet {
   }
 
   /**
-   * Next nonce: the larger of the chain's next nonce and our last-used + 1,
-   * so back-to-back payments don't reuse a nonce before the first confirms.
+   * Next nonce from the chain. Hiro's possible_next_nonce includes mempool
+   * transactions, so a broadcast payment is counted as soon as it's accepted,
+   * and a payment that was refused before broadcast leaves no gap.
    */
   async nextNonce(address: string): Promise<bigint> {
     const res = await fetch(`${HIRO[this.network]}/extended/v1/address/${address}/nonces`);
     if (!res.ok) throw new Error(`Nonce lookup failed: ${res.status}`);
     const { possible_next_nonce } = (await res.json()) as { possible_next_nonce: number };
-    const [row] = this.sql<{ last_nonce: number | null }>`SELECT last_nonce FROM stacks_wallet WHERE id = 1`;
-    const next = Math.max(possible_next_nonce, (row?.last_nonce ?? -1) + 1);
-    this.sql`UPDATE stacks_wallet SET last_nonce = ${next} WHERE id = 1`;
-    return BigInt(next);
+    return BigInt(possible_next_nonce);
   }
 
   /** STX and sBTC balances from the Hiro API. */
