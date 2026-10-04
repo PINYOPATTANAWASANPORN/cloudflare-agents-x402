@@ -13,7 +13,7 @@ import {
 } from "../src/hono";
 
 const recipient = privateKeyToAddress(randomPrivateKey(), "testnet");
-const payer = { privateKey: randomPrivateKey(), network: "testnet" as const, getNonce: async () => 0n };
+const payer = { privateKey: randomPrivateKey(), network: "testnet" as const, getNonce: async () => 0n, fee: 1000n };
 
 function facilitator() {
   return {
