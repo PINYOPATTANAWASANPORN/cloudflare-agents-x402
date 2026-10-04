@@ -4,8 +4,9 @@ export type StacksNetworkName = "mainnet" | "testnet";
 export type TokenSymbol = "STX" | "sBTC" | "USDCx";
 
 /**
- * aibtc x402 sponsor relay. As of 2026-10 it is the only Stacks facilitator
- * confirmed live on mainnet; it requires sponsored transactions and pays gas.
+ * aibtc x402 relay. As of 2026-10 it is the only Stacks facilitator confirmed
+ * live on mainnet. Its /settle broadcasts self-paid (or already
+ * sponsor-signed) transactions; it does not sponsor, so payers need STX for fees.
  */
 export const AIBTC_RELAY_URL: Record<StacksNetworkName, string> = {
   mainnet: "https://x402-relay.aibtc.com",
