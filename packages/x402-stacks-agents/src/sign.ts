@@ -17,12 +17,16 @@ import { TOKEN_CONTRACTS, fromCAIP2, tokenForAsset } from "./constants";
 export type StacksSigner = {
   privateKey: string;
   /**
-   * Build sponsored (fee 0) transactions. The aibtc relay rejects anything
-   * else, so this defaults to true.
+   * Build a sponsored (fee 0) transaction for a sponsor to co-sign. Off by
+   * default: the aibtc relay's /settle (v1.34+) only accepts self-paid or
+   * already sponsor-signed transactions and refuses an empty sponsor slot.
+   * Also enabled when the requirement advertises `extra.feePayer`.
    */
   sponsored?: boolean;
   /** Account nonce. Fetched from the Stacks API when omitted. */
   nonce?: bigint;
+  /** Fee in microSTX for self-paid transactions. Estimated when omitted. */
+  fee?: bigint;
 };
 
 /**
@@ -42,8 +46,12 @@ export async function signPayment(
   const sender = privateKeyToAddress(signer.privateKey, network);
   const memo = createFacilitatorMemo(createFacilitatorNonce());
   const sponsored =
-    (signer.sponsored ?? true) || typeof req.extra?.feePayer === "string";
-  const fee = sponsored ? { sponsored: true, fee: 0n } : {};
+    signer.sponsored === true || typeof req.extra?.feePayer === "string";
+  const fee = sponsored
+    ? { sponsored: true, fee: 0n }
+    : signer.fee !== undefined
+      ? { fee: signer.fee }
+      : {};
   const nonce = signer.nonce !== undefined ? { nonce: signer.nonce } : {};
 
   if (token === "STX") {
@@ -70,7 +78,7 @@ export async function signPayment(
       Cl.principal(req.payTo),
       Cl.some(Cl.bufferFromAscii(memo))
     ],
-    // Deny mode: the sponsor can't make this tx move more than `amount`.
+    // Deny mode: the tx can't move more than `amount` of the token.
     postConditionMode: "deny",
     postConditions: [
       Pc.principal(sender)
