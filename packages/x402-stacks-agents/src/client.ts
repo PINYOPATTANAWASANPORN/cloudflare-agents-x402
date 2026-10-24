@@ -15,16 +15,36 @@ import {
 } from "./constants";
 import { createPaymentPayload } from "./sign";
 
+export type StacksPayerBudget = {
+  /** Maximum cumulative spend per token in atomic units. */
+  total?: Partial<Record<TokenSymbol, bigint>>;
+  /** Sliding window duration in milliseconds. When omitted, budget accumulates indefinitely. */
+  windowMs?: number;
+};
+
+export type ConfirmationContext = {
+  selected: PaymentRequirementsV2;
+  accepts: PaymentRequirementsV2[];
+};
+
+export type ConfirmationCallback = (
+  accepts: PaymentRequirementsV2[] & {
+    selected?: PaymentRequirementsV2;
+    accepts?: PaymentRequirementsV2[];
+  },
+  selected?: PaymentRequirementsV2
+) => Promise<boolean>;
+
 export type StacksPayerConfig = {
   /** Hex private key of the paying wallet. */
   privateKey: string;
   network: StacksNetworkName | NetworkV2;
   /** Per-payment caps in atomic units. Merged over DEFAULT_MAX_AMOUNT. */
   maxAmount?: Partial<Record<TokenSymbol, bigint>>;
+  /** Cumulative spend budget across payments. */
+  budget?: StacksPayerBudget;
   /** Called before every payment; return false to decline. */
-  confirmationCallback?: (
-    accepts: PaymentRequirementsV2[]
-  ) => Promise<boolean>;
+  confirmationCallback?: ConfirmationCallback;
   /**
    * Build sponsored (fee 0) transactions for a sponsoring facilitator.
    * Default false: payments are self-paid, so the wallet needs a little STX.
@@ -41,7 +61,62 @@ export type StacksPayerConfig = {
 
 export class PaymentDeclinedError extends Error {}
 export class PaymentCapError extends Error {}
+export class AdvertisedPriceMismatchError extends Error {}
 export class NoCompatibleRequirementError extends Error {}
+
+type SpendEntry = { amount: bigint; timestamp: number };
+const spendLedgers = new WeakMap<object, Map<TokenSymbol, SpendEntry[]>>();
+
+function recordSpend(
+  cfg: StacksPayerConfig,
+  token: TokenSymbol,
+  amount: bigint,
+  now: number
+): void {
+  let tokenMap = spendLedgers.get(cfg);
+  if (!tokenMap) {
+    tokenMap = new Map();
+    spendLedgers.set(cfg, tokenMap);
+  }
+  let entries = tokenMap.get(token);
+  if (!entries) {
+    entries = [];
+    tokenMap.set(token, entries);
+  }
+  entries.push({ amount, timestamp: now });
+}
+
+function getSpent(
+  cfg: StacksPayerConfig,
+  token: TokenSymbol,
+  now: number,
+  windowMs?: number
+): bigint {
+  const tokenMap = spendLedgers.get(cfg);
+  if (!tokenMap) return 0n;
+  const entries = tokenMap.get(token);
+  if (!entries || entries.length === 0) return 0n;
+
+  if (windowMs !== undefined && windowMs > 0) {
+    const cutoff = now - windowMs;
+    while (entries.length > 0 && entries[0].timestamp < cutoff) {
+      entries.shift();
+    }
+  }
+  return entries.reduce((acc, curr) => acc + curr.amount, 0n);
+}
+
+export function getSpentAmount(
+  cfg: StacksPayerConfig,
+  token: TokenSymbol,
+  windowMs?: number
+): bigint {
+  return getSpent(cfg, token, Date.now(), windowMs ?? cfg.budget?.windowMs);
+}
+
+export function resetSpentAmount(cfg: StacksPayerConfig): void {
+  spendLedgers.delete(cfg);
+}
 
 export function payerAddress(cfg: StacksPayerConfig): string {
   return privateKeyToAddress(cfg.privateKey, fromCAIP2(toCAIP2(cfg.network)));
@@ -49,12 +124,13 @@ export function payerAddress(cfg: StacksPayerConfig): string {
 
 /**
  * Pick the first requirement on our network in a token we can sign, enforce
- * the cap, ask for confirmation, then sign. Throws typed errors on refusal.
+ * the cap and budget, ask for confirmation, then sign. Throws typed errors on refusal.
  */
 export async function payFor(
   required: PaymentRequiredV2,
   cfg: StacksPayerConfig,
-  confirm = cfg.confirmationCallback
+  confirm = cfg.confirmationCallback,
+  expectedPrice?: { amount: string; asset: string; network?: string }
 ): Promise<PaymentPayloadV2> {
   const network = toCAIP2(cfg.network);
   const networkName = fromCAIP2(network);
@@ -95,8 +171,39 @@ export async function payFor(
     );
   }
 
-  if (confirm && !(await confirm(structuredClone(accepts)))) {
-    throw new PaymentDeclinedError("User declined payment");
+  if (expectedPrice) {
+    const mismatch =
+      selected.amount !== expectedPrice.amount ||
+      selected.asset !== expectedPrice.asset;
+    if (mismatch && !confirm) {
+      throw new AdvertisedPriceMismatchError(
+        `Payment amount (${selected.amount} of ${selected.asset}) does not match advertised price (${expectedPrice.amount} of ${expectedPrice.asset})`
+      );
+    }
+  }
+
+  if (cfg.budget?.total && cfg.budget.total[token] !== undefined) {
+    const budgetLimit = cfg.budget.total[token]!;
+    const now = Date.now();
+    const spent = getSpent(cfg, token, now, cfg.budget.windowMs);
+    if (spent + amount > budgetLimit) {
+      throw new PaymentCapError(
+        `Payment exceeds budget: ${spent + amount} > ${budgetLimit} (${token})`
+      );
+    }
+    recordSpend(cfg, token, amount, now);
+  }
+
+  if (confirm) {
+    const acceptsClone = structuredClone(accepts);
+    const selectedClone = structuredClone(selected);
+    const enriched = Object.assign(acceptsClone, {
+      selected: selectedClone,
+      accepts: acceptsClone
+    });
+    if (!(await confirm(enriched, selectedClone))) {
+      throw new PaymentDeclinedError("User declined payment");
+    }
   }
 
   return createPaymentPayload(required, selected, {
