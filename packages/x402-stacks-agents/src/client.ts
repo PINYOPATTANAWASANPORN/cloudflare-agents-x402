@@ -25,6 +25,10 @@ export type StacksPayerBudget = {
 export type ConfirmationContext = {
   selected: PaymentRequirementsV2;
   accepts: PaymentRequirementsV2[];
+  /** Advertised price if available from tool catalog metadata. */
+  advertisedPrice?: { amount: string; asset: string; network?: string };
+  /** True if selected price/asset/network differs from advertised price. */
+  priceMismatch?: boolean;
 };
 
 export type ConfirmationCallback = (
@@ -32,7 +36,8 @@ export type ConfirmationCallback = (
     selected?: PaymentRequirementsV2;
     accepts?: PaymentRequirementsV2[];
   },
-  selected?: PaymentRequirementsV2
+  selected?: PaymentRequirementsV2,
+  context?: ConfirmationContext
 ) => Promise<boolean>;
 
 export type StacksPayerConfig = {
@@ -41,7 +46,13 @@ export type StacksPayerConfig = {
   network: StacksNetworkName | NetworkV2;
   /** Per-payment caps in atomic units. Merged over DEFAULT_MAX_AMOUNT. */
   maxAmount?: Partial<Record<TokenSymbol, bigint>>;
-  /** Cumulative spend budget across payments. */
+  /**
+   * Cumulative spend budget across payments.
+   * Note: The budget ledger is tracked in-memory per config object (WeakMap),
+   * resetting when the Worker restarts. Cloned config objects ({ ...cfg })
+   * maintain separate spend ledgers. Payments that fail after signing remain
+   * counted towards budget for safety.
+   */
   budget?: StacksPayerBudget;
   /** Called before every payment; return false to decline. */
   confirmationCallback?: ConfirmationCallback;
@@ -72,7 +83,7 @@ function recordSpend(
   token: TokenSymbol,
   amount: bigint,
   now: number
-): void {
+): SpendEntry {
   let tokenMap = spendLedgers.get(cfg);
   if (!tokenMap) {
     tokenMap = new Map();
@@ -83,7 +94,24 @@ function recordSpend(
     entries = [];
     tokenMap.set(token, entries);
   }
-  entries.push({ amount, timestamp: now });
+  const entry: SpendEntry = { amount, timestamp: now };
+  entries.push(entry);
+  return entry;
+}
+
+function rollbackSpend(
+  cfg: StacksPayerConfig,
+  token: TokenSymbol,
+  entry: SpendEntry
+): void {
+  const tokenMap = spendLedgers.get(cfg);
+  if (!tokenMap) return;
+  const entries = tokenMap.get(token);
+  if (!entries) return;
+  const index = entries.indexOf(entry);
+  if (index !== -1) {
+    entries.splice(index, 1);
+  }
 }
 
 function getSpent(
@@ -171,17 +199,20 @@ export async function payFor(
     );
   }
 
+  let priceMismatch = false;
   if (expectedPrice) {
-    const mismatch =
+    priceMismatch =
       selected.amount !== expectedPrice.amount ||
-      selected.asset !== expectedPrice.asset;
-    if (mismatch && !confirm) {
+      selected.asset !== expectedPrice.asset ||
+      (expectedPrice.network !== undefined && selected.network !== expectedPrice.network);
+    if (priceMismatch && !confirm) {
       throw new AdvertisedPriceMismatchError(
         `Payment amount (${selected.amount} of ${selected.asset}) does not match advertised price (${expectedPrice.amount} of ${expectedPrice.asset})`
       );
     }
   }
 
+  let spendEntry: SpendEntry | undefined;
   if (cfg.budget?.total && cfg.budget.total[token] !== undefined) {
     const budgetLimit = cfg.budget.total[token]!;
     const now = Date.now();
@@ -191,25 +222,38 @@ export async function payFor(
         `Payment exceeds budget: ${spent + amount} > ${budgetLimit} (${token})`
       );
     }
-    recordSpend(cfg, token, amount, now);
+    spendEntry = recordSpend(cfg, token, amount, now);
   }
 
-  if (confirm) {
-    const acceptsClone = structuredClone(accepts);
-    const selectedClone = structuredClone(selected);
-    const enriched = Object.assign(acceptsClone, {
-      selected: selectedClone,
-      accepts: acceptsClone
-    });
-    if (!(await confirm(enriched, selectedClone))) {
-      throw new PaymentDeclinedError("User declined payment");
+  try {
+    if (confirm) {
+      const acceptsClone = structuredClone(accepts);
+      const selectedClone = structuredClone(selected);
+      const enriched = Object.assign(acceptsClone, {
+        selected: selectedClone,
+        accepts: acceptsClone
+      });
+      const context: ConfirmationContext = {
+        selected: selectedClone,
+        accepts: acceptsClone,
+        advertisedPrice: expectedPrice,
+        priceMismatch
+      };
+      if (!(await confirm(enriched, selectedClone, context))) {
+        throw new PaymentDeclinedError("User declined payment");
+      }
     }
-  }
 
-  return createPaymentPayload(required, selected, {
-    privateKey: cfg.privateKey,
-    sponsored: cfg.sponsored,
-    fee: cfg.fee,
-    nonce: cfg.getNonce ? await cfg.getNonce(payerAddress(cfg)) : undefined
-  });
+    return await createPaymentPayload(required, selected, {
+      privateKey: cfg.privateKey,
+      sponsored: cfg.sponsored,
+      fee: cfg.fee,
+      nonce: cfg.getNonce ? await cfg.getNonce(payerAddress(cfg)) : undefined
+    });
+  } catch (err) {
+    if (spendEntry) {
+      rollbackSpend(cfg, token, spendEntry);
+    }
+    throw err;
+  }
 }

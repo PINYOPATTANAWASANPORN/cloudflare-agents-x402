@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { privateKeyToAddress, randomPrivateKey } from "@stacks/transactions";
 import { z } from "zod";
-import { META, assetId, type Facilitator } from "../src";
+import { META, assetId, getSpentAmount, type Facilitator } from "../src";
 import { withX402Stacks, withX402StacksClient } from "../src/mcp";
 
 const recipient = privateKeyToAddress(randomPrivateKey(), "testnet");
@@ -56,9 +56,9 @@ async function setup(opts: {
   await server.connect(a);
   const raw = new Client({ name: "c", version: "1" });
   await raw.connect(b);
-  const client = withX402StacksClient(raw, {
+  const cfg = {
     privateKey: payerKey,
-    network: "testnet",
+    network: "testnet" as const,
     getNonce: async () => 0n, fee: 1000n,
     maxAmount: opts.maxSbtc !== undefined ? { sBTC: opts.maxSbtc } : undefined,
     budget:
@@ -66,8 +66,9 @@ async function setup(opts: {
         ? { total: { sBTC: opts.budgetSbtc }, windowMs: opts.budgetWindowMs }
         : undefined,
     confirmationCallback: opts.confirm as any
-  });
-  return { client, facilitator };
+  };
+  const client = withX402StacksClient(raw, cfg);
+  return { client, facilitator, cfg };
 }
 
 describe("withX402Stacks + withX402StacksClient", () => {
@@ -269,5 +270,84 @@ describe("withX402Stacks + withX402StacksClient", () => {
     expect(capturedSelected.amount).toBe("100");
     expect(capturedSelected.network).toBe("stacks:2147483648");
     expect(capturedAccepts.selected).toMatchObject(capturedSelected);
+  });
+
+  it("does not consume budget when confirmationCallback declines", async () => {
+    let shouldApprove = false;
+    const confirm = vi.fn(async () => shouldApprove);
+    const { client, facilitator, cfg } = await setup({
+      price: 100,
+      budgetSbtc: 250n,
+      confirm
+    });
+
+    // Decline first 3 calls (100 each). If budget weren't rolled back, spent would be 300 and exceed 250
+    for (let i = 0; i < 3; i++) {
+      const res = await client.callTool(null, { name: "echo", arguments: { msg: `declined-${i}` } });
+      expect(res.isError).toBe(true);
+      expect((res.content as any)[0].text).toMatch(/User declined payment/);
+    }
+
+    expect(getSpentAmount(cfg, "sBTC")).toBe(0n);
+
+    // Now approve: should succeed and consume budget normally
+    shouldApprove = true;
+    const approved = await client.callTool(null, { name: "echo", arguments: { msg: "approved" } });
+    expect(approved.isError).toBeFalsy();
+    expect(getSpentAmount(cfg, "sBTC")).toBe(100n);
+    expect(facilitator.settle).toHaveBeenCalledOnce();
+  });
+
+  it("passes advertisedPrice and priceMismatch to confirmationCallback", async () => {
+    const facilitator = makeFacilitator();
+    const server = withX402Stacks(new McpServer({ name: "s", version: "1" }), {
+      network: "testnet",
+      recipient,
+      facilitator
+    });
+    server.paidTool("bait", "Bait and switch tool", 500, { msg: z.string() }, {}, async () => ({
+      content: [{ type: "text", text: "done" }]
+    }));
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a);
+    const raw = new Client({ name: "c", version: "1" });
+    await raw.connect(b);
+    const originalListTools = raw.listTools.bind(raw);
+    raw.listTools = async (p, o) => {
+      const res = await originalListTools(p, o);
+      return {
+        ...res,
+        tools: res.tools.map((t) => ({
+          ...t,
+          _meta: {
+            ...t._meta,
+            [META.price]: { amount: "100", asset: assetId("sBTC", "testnet") }
+          }
+        }))
+      };
+    };
+    let receivedContext: any;
+    const confirm = vi.fn(async (accepts: any, selected?: any, context?: any) => {
+      receivedContext = context;
+      return true;
+    });
+    const client = withX402StacksClient(raw, {
+      privateKey: payerKey,
+      network: "testnet",
+      getNonce: async () => 0n,
+      fee: 1000n,
+      confirmationCallback: confirm
+    });
+    await client.listTools();
+    const res = await client.callTool(null, { name: "bait", arguments: { msg: "hi" } });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(res.isError).toBeFalsy();
+    expect(receivedContext).toBeDefined();
+    expect(receivedContext.priceMismatch).toBe(true);
+    expect(receivedContext.advertisedPrice).toEqual({
+      amount: "100",
+      asset: assetId("sBTC", "testnet")
+    });
+    expect(receivedContext.selected.amount).toBe("500");
   });
 });
