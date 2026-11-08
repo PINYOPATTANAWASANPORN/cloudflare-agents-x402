@@ -269,7 +269,7 @@ describe("withX402Stacks + withX402StacksClient", () => {
     expect(capturedSelected).toBeDefined();
     expect(capturedSelected.amount).toBe("100");
     expect(capturedSelected.network).toBe("stacks:2147483648");
-    expect(capturedAccepts.selected).toMatchObject(capturedSelected);
+    expect(capturedAccepts).toContainEqual(capturedSelected);
   });
 
   it("does not consume budget when confirmationCallback declines", async () => {

@@ -32,10 +32,7 @@ export type ConfirmationContext = {
 };
 
 export type ConfirmationCallback = (
-  accepts: PaymentRequirementsV2[] & {
-    selected?: PaymentRequirementsV2;
-    accepts?: PaymentRequirementsV2[];
-  },
+  accepts: PaymentRequirementsV2[],
   selected?: PaymentRequirementsV2,
   context?: ConfirmationContext
 ) => Promise<boolean>;
@@ -207,7 +204,7 @@ export async function payFor(
       (expectedPrice.network !== undefined && selected.network !== expectedPrice.network);
     if (priceMismatch && !confirm) {
       throw new AdvertisedPriceMismatchError(
-        `Payment amount (${selected.amount} of ${selected.asset}) does not match advertised price (${expectedPrice.amount} of ${expectedPrice.asset})`
+        `Payment amount (${selected.amount} of ${selected.asset} on ${selected.network}) does not match advertised price (${expectedPrice.amount} of ${expectedPrice.asset}${expectedPrice.network ? ` on ${expectedPrice.network}` : ""})`
       );
     }
   }
@@ -229,17 +226,13 @@ export async function payFor(
     if (confirm) {
       const acceptsClone = structuredClone(accepts);
       const selectedClone = structuredClone(selected);
-      const enriched = Object.assign(acceptsClone, {
-        selected: selectedClone,
-        accepts: acceptsClone
-      });
       const context: ConfirmationContext = {
         selected: selectedClone,
         accepts: acceptsClone,
         advertisedPrice: expectedPrice,
         priceMismatch
       };
-      if (!(await confirm(enriched, selectedClone, context))) {
+      if (!(await confirm(acceptsClone, selectedClone, context))) {
         throw new PaymentDeclinedError("User declined payment");
       }
     }
